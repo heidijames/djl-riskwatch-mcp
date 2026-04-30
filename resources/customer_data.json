@@ -1,0 +1,25 @@
+{
+  "customers": [
+    {
+      "customer_id": "CUST001",
+      "name": "Global Imports Ltd",
+      "contact_person": "John Tan",
+      "email": "john.tan@globalimports.com",
+      "company_type": "retail"
+    },
+    {
+      "customer_id": "CUST002",
+      "name": "FreshFoods Supply",
+      "contact_person": "Sarah Lim",
+      "email": "sarah.lim@freshfoods.com",
+      "company_type": "perishable_goods"
+    },
+    {
+      "customer_id": "CUST003",
+      "name": "TechParts Distribution",
+      "contact_person": "David Wong",
+      "email": "david.wong@techparts.com",
+      "company_type": "electronics"
+    }
+  ]
+}

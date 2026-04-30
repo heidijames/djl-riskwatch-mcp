@@ -1,0 +1,22 @@
+{
+  "Singapore": {
+    "congestion_level": "high",
+    "risk_score": 4,
+    "typical_delay_hours": 18
+  },
+  "Port Klang": {
+    "congestion_level": "medium",
+    "risk_score": 3,
+    "typical_delay_hours": 10
+  },
+  "Shanghai": {
+    "congestion_level": "high",
+    "risk_score": 4,
+    "typical_delay_hours": 20
+  },
+  "Dubai": {
+    "congestion_level": "medium",
+    "risk_score": 3,
+    "typical_delay_hours": 12
+  }
+}
