@@ -1,0 +1,32 @@
+{
+  "risk_levels": {
+    "low": {
+      "max_score": 2.5,
+      "description": "Low risk of delay"
+    },
+    "medium": {
+      "min_score": 2.5,
+      "max_score": 3.5,
+      "description": "Moderate risk of delay"
+    },
+    "high": {
+      "min_score": 3.5,
+      "description": "High risk of delay"
+    }
+  },
+  "cargo_weights": {
+    "general": 1,
+    "critical": 3,
+    "temperature": 4
+  },
+  "delay_thresholds": {
+    "low": 6,
+    "medium": 18,
+    "high": 36
+  },
+  "actions": {
+    "low": "Proceed",
+    "medium": "Proceed with caution and monitor closely",
+    "high": "Delay dispatch, consider alternative port or carrier, escalate to manager"
+  }
+}
