@@ -1,0 +1,7 @@
+fastmcp
+uvicorn
+fastapi
+fastapi-mcp
+feedparser
+python-dotenv
+httpx
