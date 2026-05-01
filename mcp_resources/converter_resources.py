@@ -1,66 +1,84 @@
-"""Reusable MCP resources for the unit converter tutorial."""
+"""Reusable MCP resources for DJL RiskWatch."""
 
 from __future__ import annotations
 
-from typing import Any, Dict
+import csv
+import json
+from pathlib import Path
+from typing import Any, Dict, List
 
 
-def unit_reference() -> Dict[str, Any]:
+BASE_DIR = Path(__file__).resolve().parent.parent
+RESOURCES_DIR = BASE_DIR / "resources"
+
+
+def risk_thresholds() -> Dict[str, Any]:
+    """Risk classification rules and delay thresholds."""
+    with open(RESOURCES_DIR / "risk_thresholds.json", "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def port_risk_profiles() -> Dict[str, Any]:
+    """Port congestion and delay risk profiles."""
+    with open(RESOURCES_DIR / "port_risk_profiles.json", "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def customer_data() -> Dict[str, Any]:
+    """Customer contact data for communication drafts."""
+    with open(RESOURCES_DIR / "customer_data.json", "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def kaggle_supply_chain_fallback() -> List[Dict[str, Any]]:
     """
-    JSON cheatsheet of supported conversions, formulas, and sample IO.
+    Return sample fallback records from the Kaggle dataset.
 
-    Returns:
-        Dictionary describing conversions, formulas, and examples.
+    The dataset is filtered to Singapore-related shipments because Singapore
+    is used as the main hub for the MVP.
     """
-    return {
-        "id": "unit-converter-cheatsheet",
-        "title": "Unit Converter Cheatsheet",
-        "supported": {
-            "temperature": {
-                "celsius_to_fahrenheit": {"formula": "(°C × 9/5) + 32", "example": {"input": 25, "output": 77}},
-                "fahrenheit_to_celsius": {"formula": "(°F − 32) × 5/9", "example": {"input": 86, "output": 30}},
-            },
-            "distance": {
-                "kilometers_to_miles": {"formula": "km × 0.621371", "example": {"input": 5, "output": 3.106855}},
-                "miles_to_kilometers": {"formula": "mi ÷ 0.621371", "example": {"input": 3.1, "output": 4.98895}},
-            },
-        },
-        "notes": [
-            "Negative distances are rejected to keep results meaningful.",
-            "Temperature conversions accept any real number.",
-        ],
-    }
+    path = RESOURCES_DIR / "global_supply_chain_risk_2026.csv"
+    filtered_rows: List[Dict[str, Any]] = []
+
+    with open(path, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            origin = row.get("Origin_Port", "")
+            destination = row.get("Destination_Port", "")
+
+            if "Singapore" in origin or "Singapore" in destination:
+                filtered_rows.append(row)
+
+            if len(filtered_rows) >= 10:
+                break
+
+    return filtered_rows
 
 
-def troubleshooting_guide() -> str:
-    """
-    Plain‑text quick answers for common mistakes.
-
-    Returns:
-        Multi-line string with troubleshooting tips.
-    """
-    return "\n".join(
-        [
-            "Troubleshooting tips:",
-            "- Check you are using the correct unit for the endpoint.",
-            "- For miles_to_kilometers, distances must be >= 0.",
-            "- Precision: results use floating point math; round if needed.",
-            "- HTTP docs live at /docs once the server is running.",
-        ]
-    )
-
-# How would we scope this?
 RESOURCE_DEFINITIONS = [
     {
-        "name": "unit_reference",
-        "description": "JSON cheatsheet covering formulas and sample conversions.",
+        "name": "risk_thresholds",
+        "description": "JSON rules for risk classification, delay thresholds, cargo sensitivity, and recommended actions.",
         "mime_type": "application/json",
-        "func": unit_reference,
+        "func": risk_thresholds,
     },
     {
-        "name": "troubleshooting_guide",
-        "description": "Plain text tips for common conversion mistakes.",
-        "mime_type": "text/plain",
-        "func": troubleshooting_guide,
+        "name": "port_risk_profiles",
+        "description": "JSON reference data for Singapore-based port congestion and delay risk profiles.",
+        "mime_type": "application/json",
+        "func": port_risk_profiles,
+    },
+    {
+        "name": "customer_data",
+        "description": "JSON customer contact data used for delay communication drafts.",
+        "mime_type": "application/json",
+        "func": customer_data,
+    },
+    {
+        "name": "kaggle_supply_chain_fallback",
+        "description": "CSV fallback dataset sample filtered for Singapore-related shipments when live API data is unavailable.",
+        "mime_type": "text/csv",
+        "func": kaggle_supply_chain_fallback,
     },
 ]
