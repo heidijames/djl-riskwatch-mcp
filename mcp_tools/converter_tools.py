@@ -18,7 +18,39 @@ from mcp_resources.converter_resources import (
 router = APIRouter(prefix="", tags=["riskwatch"])
 
 
-# --- Core helpers ------------------------------------------------------------
+INPUT_GUIDE = {
+    "cargo_type": {
+        "general": "Non-perishable cargo with low urgency.",
+        "critical": "High-priority cargo where delays may disrupt operations or supply continuity.",
+        "temperature": "Temperature-sensitive, perishable, or low shelf-life cargo.",
+    },
+    "weather_condition": {
+        "normal": "No known weather disruption or normal operating conditions.",
+        "moderate": "Heavy rain, strong wind, rough sea, or conditions that may cause minor delays.",
+        "severe": "Storm, cyclone, port closure, vessel hold, or major weather warning.",
+    },
+    "geopolitical_risk": {
+        "low": "Stable route with no known security, sanctions, or trade disruption.",
+        "medium": "Regional tension, advisory warning, minor disruption, or possible route impact.",
+        "high": "Conflict, sanctions, blocked route, piracy/security warning, or major disruption.",
+    },
+    "carrier_reliability": {
+        "high": "Carrier has strong on-time performance and no known recent reliability issues.",
+        "medium": "Carrier has occasional delays or mixed reliability history.",
+        "low": "Carrier has frequent delays, cancellations, poor schedule reliability, or known service issues.",
+    },
+}
+
+
+def pending_decision_log() -> Dict[str, Any]:
+    return {
+        "decision_status": "pending",
+        "decision": None,
+        "decision_by": None,
+        "decision_reason": None,
+        "timestamp": None,
+    }
+
 
 def assess_route_risk_value(
     origin: str,
@@ -29,7 +61,7 @@ def assess_route_risk_value(
     carrier_reliability: str,
 ) -> Dict[str, Any]:
     """
-    Assess pre-dispatch shipment risk using rules, port profiles,
+    Assess pre-dispatch shipment risk using port profiles, cargo sensitivity,
     external risk inputs, and historical fallback data.
     """
 
@@ -39,16 +71,16 @@ def assess_route_risk_value(
     valid_carrier = ["high", "medium", "low"]
 
     if cargo_type not in valid_cargo:
-        return {"error": "Invalid cargo_type", "valid_options": valid_cargo}
+        return {"error": "Invalid cargo_type", "valid_options": valid_cargo, "input_guide": INPUT_GUIDE}
 
     if weather_condition not in valid_weather:
-        return {"error": "Invalid weather_condition", "valid_options": valid_weather}
+        return {"error": "Invalid weather_condition", "valid_options": valid_weather, "input_guide": INPUT_GUIDE}
 
     if geopolitical_risk not in valid_geo:
-        return {"error": "Invalid geopolitical_risk", "valid_options": valid_geo}
+        return {"error": "Invalid geopolitical_risk", "valid_options": valid_geo, "input_guide": INPUT_GUIDE}
 
     if carrier_reliability not in valid_carrier:
-        return {"error": "Invalid carrier_reliability", "valid_options": valid_carrier}
+        return {"error": "Invalid carrier_reliability", "valid_options": valid_carrier, "input_guide": INPUT_GUIDE}
 
     thresholds = risk_thresholds()
     ports = port_risk_profiles()
@@ -64,12 +96,10 @@ def assess_route_risk_value(
     score += origin_risk
     score += destination_risk
 
-    cargo_weights = thresholds.get("cargo_weights", {
-        "general": 1,
-        "critical": 3,
-        "temperature": 4,
-    })
-
+    cargo_weights = thresholds.get(
+        "cargo_weights",
+        {"general": 1, "critical": 3, "temperature": 4},
+    )
     score += cargo_weights.get(cargo_type, 1)
 
     weather_map = {"normal": 0, "moderate": 1, "severe": 2}
@@ -82,7 +112,8 @@ def assess_route_risk_value(
 
     historical_rows = kaggle_supply_chain_fallback()
     route_matches = [
-        row for row in historical_rows
+        row
+        for row in historical_rows
         if origin in row.get("Origin_Port", "")
         and destination in row.get("Destination_Port", "")
     ]
@@ -97,18 +128,47 @@ def assess_route_risk_value(
     else:
         risk_level = "low"
 
-    actions = thresholds.get("actions", {
-        "low": "Proceed as planned.",
-        "medium": "Proceed with caution and monitor closely.",
-        "high": "Escalate and review alternative carrier, sailing schedule, or route.",
-    })
+    actions = thresholds.get(
+        "actions",
+        {
+            "low": "Proceed as planned.",
+            "medium": "Proceed with caution and monitor closely.",
+            "high": "Escalate and review alternative carrier, sailing schedule, or route before dispatch.",
+        },
+    )
+
+    recommended_actions = [actions.get(risk_level)]
+
+    if risk_level == "high":
+        recommended_actions.extend(
+            [
+                "Escalate to operations manager before confirming dispatch.",
+                "Review alternative carrier or sailing schedule before shipment is loaded.",
+                "Prepare customer communication draft if delay risk remains high.",
+            ]
+        )
+    elif risk_level == "medium":
+        recommended_actions.extend(
+            [
+                "Proceed only after reviewing current conditions.",
+                "Increase monitoring after dispatch.",
+                "Prepare internal note for operations team.",
+            ]
+        )
+    else:
+        recommended_actions.extend(
+            [
+                "Proceed with normal booking process.",
+                "Apply standard monitoring schedule.",
+            ]
+        )
 
     return {
         "origin": origin,
         "destination": destination,
         "risk_score": score,
         "risk_level": risk_level,
-        "recommended_action": actions.get(risk_level),
+        "recommended_actions": recommended_actions,
         "contributing_factors": {
             "origin_port_risk": origin_risk,
             "destination_port_risk": destination_risk,
@@ -118,28 +178,14 @@ def assess_route_risk_value(
             "carrier_reliability": carrier_reliability,
             "historical_route_matches": len(route_matches),
         },
-        "input_guide": {
-            "cargo_type": {
-                "general": "Non-perishable cargo with low urgency.",
-                "critical": "High-priority cargo where delays may disrupt operations.",
-                "temperature": "Perishable or temperature-sensitive cargo with low shelf life.",
-            },
-            "weather_condition": {
-                "normal": "No known weather disruption.",
-                "moderate": "Heavy rain, wind, or rough sea causing possible delay.",
-                "severe": "Storm, cyclone, port closure, or major weather warning.",
-            },
-            "geopolitical_risk": {
-                "low": "Stable route with no known disruption.",
-                "medium": "Minor advisory, tension, or possible disruption.",
-                "high": "Conflict, sanctions, blocked route, or major security warning.",
-            },
-            "carrier_reliability": {
-                "high": "Consistent on-time performance.",
-                "medium": "Occasional delays.",
-                "low": "Frequent delays or known schedule unreliability.",
-            },
+        "approval": {
+            "required": risk_level in ["medium", "high"],
+            "required_role": "manager" if risk_level == "high" else "operations_staff",
+            "status": "pending" if risk_level in ["medium", "high"] else "not_required",
         },
+        "decision_log": pending_decision_log(),
+        "system_note": "The system provides recommendations only. It does not execute bookings, rerouting, carrier contact, or customer communication automatically.",
+        "input_guide": INPUT_GUIDE,
     }
 
 
@@ -154,7 +200,14 @@ def monitor_in_transit_risk_value(
     Date format expected: YYYY-MM-DD.
     """
 
-    thresholds = risk_thresholds()
+    valid_cargo = ["general", "critical", "temperature"]
+
+    if cargo_type not in valid_cargo:
+        return {
+            "error": "Invalid cargo_type",
+            "valid_options": valid_cargo,
+            "input_guide": INPUT_GUIDE,
+        }
 
     try:
         original = datetime.strptime(original_eta, "%Y-%m-%d")
@@ -168,41 +221,112 @@ def monitor_in_transit_risk_value(
     delay_days = (revised - original).days
     delay_hours = delay_days * 24
 
-    delay_limits = thresholds.get("delay_thresholds", {
-        "low": 6,
-        "medium": 18,
-        "high": 36,
-    })
-
-    if delay_hours >= delay_limits.get("high", 36):
-        risk_level = "high"
-        alert_flag = True
-        recommendation = "Escalate immediately and prepare customer communication."
-    elif delay_hours >= delay_limits.get("medium", 18):
-        risk_level = "medium"
-        alert_flag = True
-        recommendation = "Monitor closely and notify operations team."
-    elif delay_hours > 0:
+    if delay_hours <= 0:
         risk_level = "low"
         alert_flag = False
-        recommendation = "Continue monitoring."
+        recommended_actions = [
+            "Shipment is on schedule.",
+            "Continue standard monitoring.",
+        ]
     else:
-        risk_level = "low"
-        alert_flag = False
-        recommendation = "Shipment is on schedule."
+        if cargo_type == "temperature":
+            if delay_hours >= 24:
+                risk_level = "high"
+                alert_flag = True
+                recommended_actions = [
+                    "Escalate immediately to operations manager.",
+                    "Request latest carrier status and reefer/temperature-control confirmation.",
+                    "Prepare customer communication draft.",
+                    "Prioritise unloading, clearance, or receiving arrangements on arrival.",
+                    "Record decision and reason in the decision log.",
+                ]
+            elif delay_hours >= 12:
+                risk_level = "medium"
+                alert_flag = True
+                recommended_actions = [
+                    "Notify operations team.",
+                    "Verify temperature-control status with carrier.",
+                    "Increase monitoring frequency.",
+                    "Prepare internal note for possible customer update.",
+                ]
+            else:
+                risk_level = "low"
+                alert_flag = False
+                recommended_actions = [
+                    "Continue monitoring due to temperature-sensitive cargo.",
+                    "Check for further ETA changes.",
+                ]
 
-    if cargo_type == "temperature" and delay_hours > 0:
-        alert_flag = True
-        recommendation = "Escalate due to temperature-sensitive cargo."
+        elif cargo_type == "critical":
+            if delay_hours >= 36:
+                risk_level = "high"
+                alert_flag = True
+                recommended_actions = [
+                    "Escalate to operations manager.",
+                    "Request updated carrier status.",
+                    "Review downstream operational impact.",
+                    "Prepare customer communication draft.",
+                    "Record decision and reason in the decision log.",
+                ]
+            elif delay_hours >= 18:
+                risk_level = "medium"
+                alert_flag = True
+                recommended_actions = [
+                    "Notify operations team.",
+                    "Monitor revised ETA closely.",
+                    "Prepare contingency note for affected internal teams.",
+                ]
+            else:
+                risk_level = "low"
+                alert_flag = False
+                recommended_actions = [
+                    "Continue monitoring.",
+                    "Update internal ETA records.",
+                ]
+
+        else:  # general cargo
+            if delay_hours >= 48:
+                risk_level = "high"
+                alert_flag = True
+                recommended_actions = [
+                    "Escalate to operations team.",
+                    "Request updated carrier status.",
+                    "Prepare customer update if delay affects delivery commitment.",
+                    "Update receiving or warehouse schedule.",
+                    "Record decision and reason in the decision log.",
+                ]
+            elif delay_hours >= 24:
+                risk_level = "medium"
+                alert_flag = True
+                recommended_actions = [
+                    "Notify operations team.",
+                    "Update ETA records.",
+                    "Continue monitoring.",
+                ]
+            else:
+                risk_level = "low"
+                alert_flag = False
+                recommended_actions = [
+                    "Continue standard monitoring.",
+                    "No customer communication required yet.",
+                ]
 
     return {
         "shipment_id": shipment_id,
         "original_eta": original_eta,
         "revised_eta": revised_eta,
         "delay_hours": delay_hours,
+        "cargo_type": cargo_type,
         "risk_level": risk_level,
         "alert_flag": alert_flag,
-        "recommendation": recommendation,
+        "recommended_actions": recommended_actions,
+        "approval": {
+            "required": alert_flag,
+            "required_role": "manager" if risk_level == "high" else "operations_staff",
+            "status": "pending" if alert_flag else "not_required",
+        },
+        "decision_log": pending_decision_log(),
+        "system_note": "In-transit rerouting or carrier switching is usually limited. The system recommends escalation, carrier follow-up, ETA updates, handling prioritisation, and communication preparation only.",
     }
 
 
@@ -214,8 +338,17 @@ def prepare_delay_communication_value(
     revised_eta: str,
 ) -> Dict[str, Any]:
     """
-    Generate internal alert and customer email draft for delayed shipments.
+    Generate an internal alert and customer-facing email draft for shipment delays.
+    The system does not send messages automatically.
     """
+
+    valid_risk = ["low", "medium", "high"]
+
+    if risk_level not in valid_risk:
+        return {
+            "error": "Invalid risk_level",
+            "valid_options": valid_risk,
+        }
 
     customers = customer_data().get("customers", [])
     customer = next(
@@ -254,13 +387,26 @@ def prepare_delay_communication_value(
         "shipment_id": shipment_id,
         "customer": customer_name,
         "customer_email_address": email,
+        "risk_level": risk_level,
+        "delay_hours": delay_hours,
+        "revised_eta": revised_eta,
         "internal_alert": internal_alert,
         "customer_email_draft": customer_email,
-        "approval_note": "Customer email draft requires manager approval before sending.",
+        "recommended_actions": [
+            "Review internal alert.",
+            "Manager reviews and edits customer email draft if required.",
+            "Send customer update only after approval.",
+            "Log final decision and communication outcome.",
+        ],
+        "approval": {
+            "required": True,
+            "required_role": "manager",
+            "status": "pending",
+        },
+        "decision_log": pending_decision_log(),
+        "system_note": "This tool generates drafts only. It does not send emails or execute communication automatically.",
     }
 
-
-# --- FastAPI endpoints -------------------------------------------------------
 
 @router.post("/assess-route-risk")
 def assess_route_risk(
@@ -316,8 +462,6 @@ def prepare_delay_communication(
     return {"result": result, "operation": "prepare_delay_communication"}
 
 
-# --- Metadata for MCP tool registration -------------------------------------
-
 TOOL_DEFINITIONS = [
     {
         "name": "assess_route_risk",
@@ -350,13 +494,40 @@ Input guide:
     },
     {
         "name": "monitor_in_transit_risk",
-        "description": "Monitor an in-transit shipment by comparing original ETA and revised ETA.",
+        "description": """
+Monitor an in-transit shipment by comparing original ETA and revised ETA.
+
+Input guide:
+- original_eta: expected arrival date, format YYYY-MM-DD
+- revised_eta: updated arrival date from carrier/shipping line, format YYYY-MM-DD
+- cargo_type:
+  general = standard cargo
+  critical = high priority cargo
+  temperature = perishable or temperature-sensitive cargo
+
+Note:
+- The tool does not reroute shipments in transit.
+- It interprets delay impact and recommends follow-up actions.
+""",
         "func": monitor_in_transit_risk_value,
         "tags": {"logistics", "monitoring", "delay"},
     },
     {
         "name": "prepare_delay_communication",
-        "description": "Generate internal alerts and customer email drafts for shipment delays.",
+        "description": """
+Generate internal alerts and customer email drafts for shipment delays.
+
+Input guide:
+- shipment_id: unique shipment reference
+- customer_id: must match customer_data.json
+- delay_hours: total delay duration in hours
+- risk_level: low | medium | high
+- revised_eta: updated arrival date, format YYYY-MM-DD
+
+Note:
+- This tool drafts messages only.
+- Customer communication requires manager approval before sending.
+""",
         "func": prepare_delay_communication_value,
         "tags": {"logistics", "communication", "delay"},
     },
