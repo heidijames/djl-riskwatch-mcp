@@ -567,41 +567,43 @@ def record_operational_action_value(
     }
 
 
+
 @router.post("/assess-route-risk")
-def assess_route_risk(
+def assess_route_risk_endpoint(
     shipment_id: str,
-    origin: str,
-    destination: str,
+    planned_dispatch_date: str,
+    origin_port: str,
+    destination_port: str,
     cargo_type: str,
-    weather_condition: str,
-    geopolitical_risk: str,
-    carrier_reliability: str,
 ):
-    result = assess_route_risk_value(
+    result = assess_route_risk(
         shipment_id,
-        origin,
-        destination,
+        planned_dispatch_date,
+        origin_port,
+        destination_port,
         cargo_type,
-        weather_condition,
-        geopolitical_risk,
-        carrier_reliability,
     )
     return {"result": result, "operation": "assess_route_risk"}
 
 
 @router.post("/monitor-in-transit-risk")
-def monitor_in_transit_risk(
+def monitor_in_transit_risk_endpoint(
     shipment_id: str,
     original_eta: str,
     revised_eta: str,
     cargo_type: str,
 ):
-    result = monitor_in_transit_risk_value(shipment_id, original_eta, revised_eta, cargo_type)
+    result = monitor_in_transit_risk(
+        shipment_id,
+        original_eta,
+        revised_eta,
+        cargo_type,
+    )
     return {"result": result, "operation": "monitor_in_transit_risk"}
 
 
 @router.post("/prepare-delay-communication")
-def prepare_delay_communication(
+def prepare_delay_communication_endpoint(
     shipment_id: str,
     customer_id: str,
     delay_hours: int,
@@ -619,7 +621,7 @@ def prepare_delay_communication(
 
 
 @router.post("/record-operational-action")
-def record_operational_action(
+def record_operational_action_endpoint(
     shipment_id: str,
     stage: str,
     action: str,
@@ -643,7 +645,6 @@ def record_operational_action(
     )
     return {"result": result, "operation": "record_operational_action"}
 
-
 TOOL_DEFINITIONS = [
     {
         "name": "assess_route_risk",
@@ -657,7 +658,7 @@ Input guide:
 - geopolitical_risk: low | medium | high
 - carrier_reliability: high | medium | low
 """,
-        "func": assess_route_risk_value,
+        "func": assess_route_risk,
         "tags": {"logistics", "risk", "pre-dispatch"},
     },
     {
@@ -671,7 +672,7 @@ Input guide:
 - revised_eta: updated arrival date from carrier/shipping line, format YYYY-MM-DD
 - cargo_type: general | critical | temperature
 """,
-        "func": monitor_in_transit_risk_value,
+        "func": monitor_in_transit_risk,
         "tags": {"logistics", "monitoring", "delay"},
     },
     {
