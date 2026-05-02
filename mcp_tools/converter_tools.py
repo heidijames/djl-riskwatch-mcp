@@ -1,5 +1,10 @@
+"""RiskWatch MCP tools for DJL Logistics."""
+
 from __future__ import annotations
 
+import csv
+from io import StringIO
+from statistics import mean
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -21,263 +26,427 @@ INPUT_GUIDE = {
         "critical": "High-priority cargo where delays may disrupt operations or supply continuity.",
         "temperature": "Temperature-sensitive, perishable, or low shelf-life cargo.",
     },
-    "weather_condition": {
-        "normal": "No known weather disruption or normal operating conditions.",
-        "moderate": "Heavy rain, strong wind, rough sea, or possible minor delays.",
-        "severe": "Storm, cyclone, port closure, vessel hold, or major weather warning.",
+    "origin_port": {
+        "example": "Singapore",
+        "description": "Starting port for the shipment route.",
     },
-    "geopolitical_risk": {
-        "low": "Stable route with no known disruption.",
-        "medium": "Regional tension, advisory warning, or possible route impact.",
-        "high": "Conflict, sanctions, blocked route, piracy/security warning, or major disruption.",
+    "destination_port": {
+        "example": "Port Klang",
+        "description": "Destination port for the shipment route.",
     },
-    "carrier_reliability": {
-        "high": "Strong on-time performance.",
-        "medium": "Occasional delays or mixed reliability history.",
-        "low": "Frequent delays, cancellations, or known schedule unreliability.",
+    "planned_dispatch_date": {
+        "example": "2026-05-10",
+        "description": "Planned shipment dispatch date in YYYY-MM-DD format.",
     },
 }
 
 
-def assess_route_risk_value(
+def assess_route_risk(
     shipment_id: str,
-    origin: str,
-    destination: str,
-    cargo_type: str,
-    weather_condition: str,
-    geopolitical_risk: str,
-    carrier_reliability: str,
-) -> Dict[str, Any]:
-    valid_cargo = ["general", "critical", "temperature"]
-    valid_weather = ["normal", "moderate", "severe"]
-    valid_geo = ["low", "medium", "high"]
-    valid_carrier = ["high", "medium", "low"]
-
-    if cargo_type not in valid_cargo:
-        return {"error": "Invalid cargo_type", "valid_options": valid_cargo, "input_guide": INPUT_GUIDE}
-    if weather_condition not in valid_weather:
-        return {"error": "Invalid weather_condition", "valid_options": valid_weather, "input_guide": INPUT_GUIDE}
-    if geopolitical_risk not in valid_geo:
-        return {"error": "Invalid geopolitical_risk", "valid_options": valid_geo, "input_guide": INPUT_GUIDE}
-    if carrier_reliability not in valid_carrier:
-        return {"error": "Invalid carrier_reliability", "valid_options": valid_carrier, "input_guide": INPUT_GUIDE}
-
-    thresholds = risk_thresholds()
-    ports = port_risk_profiles()
-
-    origin_profile = ports.get(origin, {})
-    destination_profile = ports.get(destination, {})
-
-    origin_risk = origin_profile.get("risk_score", origin_profile.get("base_risk", 1))
-    destination_risk = destination_profile.get("risk_score", destination_profile.get("base_risk", 1))
-
-    cargo_weights = thresholds.get("cargo_weights", {"general": 1, "critical": 3, "temperature": 4})
-    weather_map = {"normal": 0, "moderate": 1, "severe": 2}
-    geo_map = {"low": 0, "medium": 1, "high": 2}
-    carrier_map = {"high": 0, "medium": 1, "low": 2}
-
-    score = (
-        origin_risk
-        + destination_risk
-        + cargo_weights.get(cargo_type, 1)
-        + weather_map[weather_condition]
-        + geo_map[geopolitical_risk]
-        + carrier_map[carrier_reliability]
+    planned_dispatch_date: str,
+    origin_port: str,
+    destination_port: str,
+    cargo_type: str
+) -> dict:
+    from mcp_resources.converter_resources import (
+        port_risk_profiles,
+        kaggle_supply_chain_fallback,
     )
 
-    historical_rows = kaggle_supply_chain_fallback()
-    route_matches = [
-        row
-        for row in historical_rows
-        if origin in row.get("Origin_Port", "")
-        and destination in row.get("Destination_Port", "")
-    ]
+    ports = port_risk_profiles()
 
-    if len(route_matches) >= 3:
-        score += 1
+    def clean(value):
+        return str(value).strip()
 
-    if score >= 8:
-        risk_level = "high"
-        message = "High pre-dispatch risk detected."
-    elif score >= 4:
-        risk_level = "medium"
-        message = "Medium pre-dispatch risk detected."
-    else:
-        risk_level = "low"
-        message = "Low pre-dispatch risk detected."
+    def norm(value):
+        return clean(value).lower()
+
+    def get_port_profile(port_name):
+        for name, profile in ports.items():
+            if norm(name) == norm(port_name):
+                return name, profile
+        return port_name, {}
+
+    def score_port(profile):
+        if not profile:
+            return 0, []
+
+        score = 0
+        drivers = []
+
+        congestion = norm(profile.get("congestion_level", ""))
+        delay = float(profile.get("average_delay_days", 0) or 0)
+        risk = norm(profile.get("risk_level", ""))
+
+        if congestion in ["high", "severe"]:
+            score += 25
+            drivers.append(f"High congestion level recorded at port: {congestion}.")
+
+        if delay >= 3:
+            score += 25
+            drivers.append(f"Average port delay is {delay} days.")
+        elif delay >= 1.5:
+            score += 15
+            drivers.append(f"Moderate average port delay is {delay} days.")
+
+        if risk == "high":
+            score += 25
+            drivers.append("Port profile is classified as high risk.")
+        elif risk == "medium":
+            score += 15
+            drivers.append("Port profile is classified as medium risk.")
+
+        return score, drivers
+
+    def cargo_sensitivity(cargo):
+        cargo = norm(cargo)
+
+        if cargo == "critical":
+            return 20, "critical", "Critical cargo has lower tolerance for dispatch disruption."
+
+        if cargo == "temperature":
+            return 25, "temperature-sensitive", (
+                "Temperature-sensitive cargo may create storage, handling, "
+                "or quality risks if delayed."
+            )
+
+        return 5, "general", "General cargo has more flexibility if minor dispatch delays occur."
+
+    def classify(score):
+        if score >= 70:
+            return "high"
+        if score >= 40:
+            return "medium"
+        return "low"
+
+    def delay_window(level, cargo):
+        cargo = norm(cargo)
+
+        if level == "high":
+            if cargo in ["critical", "temperature"]:
+                return "Hold dispatch for 24–48 hours unless port and carrier readiness are confirmed."
+            return "Consider delaying dispatch by 24 hours if port congestion is unresolved."
+
+        if level == "medium":
+            if cargo in ["critical", "temperature"]:
+                return "Proceed only after same-day operational confirmation."
+            return "Proceed with monitoring; delay is not required unless conditions worsen."
+
+        return "Proceed as planned."
+
+    origin_name, origin_profile = get_port_profile(origin_port)
+    dest_name, dest_profile = get_port_profile(destination_port)
+
+    origin_score, origin_drivers = score_port(origin_profile)
+    dest_score, dest_drivers = score_port(dest_profile)
+    cargo_score, derived_cargo_category, cargo_driver = cargo_sensitivity(cargo_type)
+
+    historical_matches = []
+
+    for row in kaggle_supply_chain_fallback():
+        row_text = {norm(k): v for k, v in row.items()}
+
+        row_origin = row_text.get("origin_port", "")
+        row_dest = row_text.get("destination_port", "")
+        row_product = row_text.get("product_category", "")
+
+        route_match = (
+            norm(origin_name) in norm(row_origin)
+            or norm(dest_name) in norm(row_dest)
+        )
+
+        cargo_match = (
+            norm(cargo_type) in norm(row_product)
+            or norm(row_product) in norm(cargo_type)
+        )
+
+        if route_match or cargo_match:
+            historical_matches.append(row)
+
+    historical_score = 0
+
+    if len(historical_matches) >= 10:
+        historical_score = 20
+    elif len(historical_matches) >= 5:
+        historical_score = 12
+    elif len(historical_matches) >= 1:
+        historical_score = 6
+
+    total_score = min(100, origin_score + dest_score + cargo_score + historical_score)
+    risk_level = classify(total_score)
+
+    risk_drivers = []
+
+    risk_drivers.extend([f"Origin port: {driver}" for driver in origin_drivers])
+    risk_drivers.extend([f"Destination port: {driver}" for driver in dest_drivers])
+
+    if norm(cargo_type) in ["critical", "temperature"]:
+        risk_drivers.append(cargo_driver)
+
+    if historical_score > 0:
+        risk_drivers.append(
+            f"CSV historical data found {len(historical_matches)} related route or cargo records."
+        )
+
+    if not risk_drivers:
+        risk_drivers.append(
+            "No active high-risk driver detected from the connected CSV and port profiles."
+        )
 
     if risk_level == "high":
-        recommended_actions = [
-            f"Review alternative carrier or sailing schedule for shipment {shipment_id} before loading.",
-            f"Delay dispatch if {weather_condition} weather, {geopolitical_risk} geopolitical risk, or carrier reliability concerns remain unresolved.",
-            "Prepare customer communication draft if the risk may affect the customer’s expected delivery timeline.",
+        actions = [
+            "Do not release shipment until the operations team confirms port readiness.",
+            "Check whether dispatch can be moved outside the highest-risk delay window.",
+            "Prepare customer-facing delay wording but do not send without approval.",
+            "Confirm storage or holding arrangements before cargo reaches the port.",
         ]
     elif risk_level == "medium":
-        recommended_actions = [
-            f"Review current route conditions before confirming dispatch for shipment {shipment_id}.",
-            "Proceed only if operations team is comfortable with current risk conditions.",
-            "Increase monitoring frequency after dispatch.",
+        actions = [
+            "Proceed only after confirming port acceptance and booking status.",
+            "Monitor the route again before dispatch.",
+            "Flag shipment internally so operations can react quickly if delay increases.",
         ]
     else:
-        recommended_actions = [
-            f"Proceed with normal booking process for shipment {shipment_id}.",
-            "Apply standard monitoring schedule after dispatch.",
+        actions = [
+            "Proceed with planned dispatch.",
+            "Record the assessment result for shipment traceability.",
+            "Recheck only if port profile or planned dispatch date changes.",
         ]
+
+    if norm(cargo_type) == "temperature":
+        actions.insert(
+            0,
+            "Confirm temperature-control handling and storage availability before dispatch."
+        )
+    elif norm(cargo_type) == "critical":
+        actions.insert(
+            0,
+            "Confirm latest acceptable delivery window with operations before dispatch."
+        )
 
     return {
         "summary": {
             "shipment_id": shipment_id,
-            "origin": origin,
-            "destination": destination,
-            "risk_level": risk_level,
-            "risk_score": score,
-            "message": message,
-        },
-        "recommended_actions": recommended_actions,
-        "details": {
-            "origin_port_risk": origin_risk,
-            "destination_port_risk": destination_risk,
+            "planned_dispatch_date": planned_dispatch_date,
+            "origin_port": origin_name,
+            "destination_port": dest_name,
             "cargo_type": cargo_type,
-            "weather_condition": weather_condition,
-            "geopolitical_risk": geopolitical_risk,
-            "carrier_reliability": carrier_reliability,
-            "historical_route_matches": len(route_matches),
+            "risk_level": risk_level,
+            "risk_score": total_score,
+            "message": (
+                f"Pre-dispatch risk is {risk_level.upper()} based on port profiles, "
+                "cargo sensitivity, and CSV historical context."
+            ),
         },
-        "system_note": "The system provides recommendations only. It does not confirm dispatch, contact carriers, or send customer communication automatically.",
+        "risk_drivers": risk_drivers,
+        "historical_context": {
+            "csv_resource_used": "kaggle_supply_chain_fallback",
+            "matching_records_found": len(historical_matches),
+            "interpretation": (
+                "Historical CSV records were used as supporting context only. "
+                "Risk was not manually entered by the user."
+            ),
+        },
+        "derived_risk_categories": {
+            "origin_port_risk_score": origin_score,
+            "destination_port_risk_score": dest_score,
+            "cargo_sensitivity_category": derived_cargo_category,
+            "historical_context_score": historical_score,
+        },
+        "decision_guidance": {
+            "recommended_decision": delay_window(risk_level, cargo_type),
+            "approval_required": risk_level == "high"
+            or norm(cargo_type) in ["critical", "temperature"],
+        },
+        "recommended_actions": actions,
+        "planning_warning": (
+            "If dispatch is delayed or port dwell time increases, DJL should check possible port storage, "
+            "detention, demurrage, or temperature-controlled holding costs before confirming the plan."
+        ),
+        "system_note": (
+            "Risk is derived from connected MCP resources: JSON port profiles and the local CSV fallback dataset. "
+            "No external API, weather feed, geopolitical feed, or carrier manual risk input was used."
+        ),
     }
 
-
-def monitor_in_transit_risk_value(
+def monitor_in_transit_risk(
     shipment_id: str,
     original_eta: str,
     revised_eta: str,
-    cargo_type: str,
-) -> Dict[str, Any]:
-    valid_cargo = ["general", "critical", "temperature"]
+    cargo_type: str
+) -> dict:
+    from datetime import datetime
 
-    if cargo_type not in valid_cargo:
-        return {"error": "Invalid cargo_type", "valid_options": valid_cargo, "input_guide": INPUT_GUIDE}
+    def norm(value):
+        return str(value).strip().lower()
 
-    try:
-        original = datetime.strptime(original_eta, "%Y-%m-%d")
-        revised = datetime.strptime(revised_eta, "%Y-%m-%d")
-    except ValueError:
-        return {"error": "Invalid date format. Use YYYY-MM-DD.", "example": "2026-05-10"}
+    def parse_date(value):
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+        raise ValueError("ETA dates must be in YYYY-MM-DD format, for example 2026-05-03.")
 
-    delay_days = (revised - original).days
-    delay_hours = delay_days * 24
+    original = parse_date(original_eta)
+    revised = parse_date(revised_eta)
+
+    delay_hours = int((revised - original).total_seconds() / 3600)
+
+    cargo = norm(cargo_type)
 
     if delay_hours <= 0:
-        risk_level = "low"
-        alert_flag = False
-        message = "Shipment is currently on schedule."
-        recommended_actions = [
-            f"Continue standard monitoring for shipment {shipment_id}.",
-            "No customer communication is required at this stage.",
-        ]
-    elif cargo_type == "temperature":
-        if delay_hours >= 24:
-            risk_level = "high"
-            alert_flag = True
-            message = "High in-transit delay risk detected for temperature-sensitive cargo."
-            recommended_actions = [
-                f"Request latest carrier status due to {delay_hours}-hour delay.",
-                "Confirm reefer or temperature-control status with the carrier.",
-                "Prepare customer communication draft due to high delay risk.",
-                "Prioritise unloading, clearance, or receiving arrangements on arrival.",
-            ]
-        elif delay_hours >= 12:
-            risk_level = "medium"
-            alert_flag = True
-            message = "Medium in-transit delay risk detected for temperature-sensitive cargo."
-            recommended_actions = [
-                f"Notify operations team of {delay_hours}-hour delay.",
-                "Verify temperature-control status with carrier.",
-                "Increase monitoring frequency.",
-            ]
-        else:
-            risk_level = "low"
-            alert_flag = False
-            message = "Minor delay detected for temperature-sensitive cargo."
-            recommended_actions = [
-                f"Continue monitoring shipment {shipment_id} due to cargo sensitivity.",
-                "Check for further ETA changes.",
-            ]
-    elif cargo_type == "critical":
-        if delay_hours >= 36:
-            risk_level = "high"
-            alert_flag = True
-            message = "High in-transit delay risk detected for critical cargo."
-            recommended_actions = [
-                f"Request updated carrier status due to {delay_hours}-hour delay.",
-                "Review downstream operational impact.",
-                "Prepare customer communication draft if delay affects commitments.",
-            ]
-        elif delay_hours >= 18:
-            risk_level = "medium"
-            alert_flag = True
-            message = "Medium in-transit delay risk detected for critical cargo."
-            recommended_actions = [
-                f"Notify operations team of {delay_hours}-hour delay.",
-                "Monitor revised ETA closely.",
-                "Prepare contingency note for affected internal teams.",
-            ]
-        else:
-            risk_level = "low"
-            alert_flag = False
-            message = "Minor delay detected for critical cargo."
-            recommended_actions = [
-                f"Continue monitoring shipment {shipment_id}.",
-                "Update internal ETA records.",
-            ]
+        status = "on_time_or_improved"
+    elif delay_hours <= 24:
+        status = "minor_delay"
+    elif delay_hours <= 72:
+        status = "moderate_delay"
     else:
-        if delay_hours >= 48:
-            risk_level = "high"
-            alert_flag = True
-            message = "High in-transit delay risk detected for general cargo."
-            recommended_actions = [
-                f"Request updated carrier status due to {delay_hours}-hour delay.",
-                "Prepare customer update if delay affects delivery commitment.",
-                "Update receiving or warehouse schedule.",
+        status = "major_delay"
+
+    if cargo == "temperature":
+        if delay_hours > 24:
+            urgency = "high"
+        elif delay_hours > 0:
+            urgency = "medium"
+        else:
+            urgency = "low"
+    elif cargo == "critical":
+        if delay_hours > 48:
+            urgency = "high"
+        elif delay_hours > 0:
+            urgency = "medium"
+        else:
+            urgency = "low"
+    else:
+        if delay_hours > 72:
+            urgency = "high"
+        elif delay_hours > 24:
+            urgency = "medium"
+        else:
+            urgency = "low"
+
+    if delay_hours <= 0:
+        impact = "No delay impact detected. Revised ETA is on time or earlier than the original ETA."
+        priority_actions = [
+            "Record revised ETA in the shipment file.",
+            "No escalation required."
+        ]
+        secondary_actions = [
+            "Continue standard shipment monitoring."
+        ]
+    elif cargo == "temperature":
+        impact = (
+            "Delay may affect temperature-control planning, receiving arrangements, "
+            "storage availability, and product quality risk."
+        )
+        priority_actions = [
+            "Confirm temperature-control status with the carrier immediately.",
+            "Check whether cold storage or priority receiving is required at destination.",
+            "Notify operations manager if delay exceeds acceptable receiving window."
+        ]
+        secondary_actions = [
+            "Prepare customer update draft for review.",
+            "Record delay reason and revised ETA in the shipment log."
+        ]
+    elif cargo == "critical":
+        impact = (
+            "Delay may affect operational continuity, production planning, customer commitments, "
+            "or downstream delivery schedules."
+        )
+        priority_actions = [
+            "Escalate revised ETA to operations team.",
+            "Check whether the receiving or production schedule needs adjustment.",
+            "Confirm whether an alternative recovery action is required."
+        ]
+        secondary_actions = [
+            "Prepare internal delay briefing.",
+            "Prepare customer update draft if customer delivery commitment may be affected."
+        ]
+    else:
+        impact = (
+            "Delay affects delivery planning but is less sensitive than critical or temperature cargo."
+        )
+        if delay_hours <= 24:
+            priority_actions = [
+                "Update shipment record with revised ETA.",
+                "Monitor for further ETA changes."
             ]
-        elif delay_hours >= 24:
-            risk_level = "medium"
-            alert_flag = True
-            message = "Medium in-transit delay risk detected for general cargo."
-            recommended_actions = [
-                f"Notify operations team of {delay_hours}-hour delay.",
-                "Update ETA records.",
-                "Continue monitoring.",
+            secondary_actions = [
+                "Inform operations only if the delay affects receiving schedule."
+            ]
+        elif delay_hours <= 72:
+            priority_actions = [
+                "Notify operations team of moderate delay.",
+                "Check destination receiving availability for the revised ETA."
+            ]
+            secondary_actions = [
+                "Prepare customer update only if delivery commitment is affected.",
+                "Record carrier delay reason if available."
             ]
         else:
-            risk_level = "low"
-            alert_flag = False
-            message = "Minor delay detected for general cargo."
-            recommended_actions = [
-                f"Continue standard monitoring for shipment {shipment_id}.",
-                "No customer communication is required yet.",
+            priority_actions = [
+                "Escalate to operations manager due to major delay.",
+                "Review whether downstream delivery or customer commitment is affected."
             ]
+            secondary_actions = [
+                "Prepare customer communication draft for approval.",
+                "Record delay and follow-up action in the decision log."
+            ]
+
+    if urgency == "high":
+        escalation = {
+            "required": True,
+            "level": "manager",
+            "guidance": "Escalate immediately because delay length and cargo sensitivity create high operational risk."
+        }
+    elif urgency == "medium":
+        escalation = {
+            "required": True,
+            "level": "operations_team",
+            "guidance": "Escalate internally so the team can adjust receiving, storage, or customer planning."
+        }
+    else:
+        escalation = {
+            "required": False,
+            "level": "standard_monitoring",
+            "guidance": "No formal escalation required unless ETA changes again."
+        }
 
     return {
         "summary": {
             "shipment_id": shipment_id,
             "cargo_type": cargo_type,
-            "risk_level": risk_level,
-            "delay_hours": delay_hours,
-            "message": message,
-        },
-        "eta_update": {
             "original_eta": original_eta,
             "revised_eta": revised_eta,
+            "message": f"In-transit monitoring shows {status.replace('_', ' ')} with {urgency.upper()} urgency."
         },
-        "recommended_actions": recommended_actions,
+        "eta_analysis": {
+            "delay_hours": delay_hours,
+            "delay_days": round(delay_hours / 24, 2),
+            "status": status
+        },
+        "urgency": {
+            "level": urgency,
+            "reason": f"Urgency is based on a {delay_hours}-hour ETA change and cargo type '{cargo_type}'."
+        },
+        "impact_assessment": impact,
+        "recommended_actions": {
+            "priority": priority_actions,
+            "secondary": secondary_actions
+        },
+        "escalation_guidance": escalation,
         "details": {
-            "alert_flag": alert_flag,
-            "delay_basis": "Revised ETA compared with original ETA.",
-            "note": "In-transit carrier switching or rerouting is usually limited. The system recommends follow-up and preparation actions only.",
+            "revised_eta_is_user_provided": True,
+            "prediction_used": False,
+            "cargo_sensitivity_applied": cargo,
+            "monitoring_stage": "in_transit"
         },
+        "system_note": (
+            "Revised ETA is treated as an input from carrier or operations update. "
+            "The system does not predict ETA and does not use external APIs."
+        )
     }
-
 
 def prepare_delay_communication_value(
     shipment_id: str,

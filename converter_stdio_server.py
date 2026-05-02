@@ -56,7 +56,6 @@ for resource in RESOURCE_DEFINITIONS:
 
 # --- Register prompt templates ---
 for prompt in PROMPT_DEFINITIONS:
-    print(prompt)
     name = prompt["name"]
     desc= prompt.get("description", name)
     prompt_function = prompt["func"]

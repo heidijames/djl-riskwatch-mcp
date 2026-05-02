@@ -32,10 +32,11 @@ def customer_data() -> Dict[str, Any]:
 
 def kaggle_supply_chain_fallback() -> List[Dict[str, Any]]:
     """
-    Return sample fallback records from the Kaggle dataset.
+    Return Singapore-related fallback records from the Kaggle supply chain dataset.
 
-    The dataset is filtered to Singapore-related shipments because Singapore
-    is used as the main hub for the MVP.
+    Singapore is used as the main hub for the MVP.
+    The 10-row limit has been removed so the tools have more data variation
+    for scenario testing.
     """
     path = RESOURCES_DIR / "global_supply_chain_risk_2026.csv"
     filtered_rows: List[Dict[str, Any]] = []
@@ -50,22 +51,25 @@ def kaggle_supply_chain_fallback() -> List[Dict[str, Any]]:
             if "Singapore" in origin or "Singapore" in destination:
                 filtered_rows.append(row)
 
-            if len(filtered_rows) >= 10:
-                break
-
     return filtered_rows
 
 
 RESOURCE_DEFINITIONS = [
     {
         "name": "risk_thresholds",
-        "description": "JSON rules for risk classification, delay thresholds, cargo sensitivity, and recommended actions.",
+        "description": (
+            "JSON rules for risk classification, delay thresholds, "
+            "cargo sensitivity, and recommended actions."
+        ),
         "mime_type": "application/json",
         "func": risk_thresholds,
     },
     {
         "name": "port_risk_profiles",
-        "description": "JSON reference data for Singapore-based port congestion and delay risk profiles.",
+        "description": (
+            "JSON reference data for Singapore-based port congestion "
+            "and delay risk profiles."
+        ),
         "mime_type": "application/json",
         "func": port_risk_profiles,
     },
@@ -77,7 +81,11 @@ RESOURCE_DEFINITIONS = [
     },
     {
         "name": "kaggle_supply_chain_fallback",
-        "description": "CSV fallback dataset sample filtered for Singapore-related shipments when live API data is unavailable.",
+        "description": (
+            "CSV fallback dataset filtered for Singapore-related shipments. "
+            "Used as local historical supply chain risk data when live API data "
+            "is unavailable."
+        ),
         "mime_type": "text/csv",
         "func": kaggle_supply_chain_fallback,
     },
