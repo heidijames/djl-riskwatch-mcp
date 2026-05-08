@@ -1,4 +1,11 @@
-# Unit Converter API + MCP Tutorial
+# # DJL RiskWatch – MCP-Based Shipment Risk System
+
+DJL RiskWatch is a decision-support system designed to evaluate shipment risk at pre-dispatch and monitor delays during transit.
+
+The system uses MCP tools, resources, and prompts to simulate real-world logistics decision-making. It combines port risk profiles, cargo sensitivity, and a fallback dataset to generate risk levels and recommended actions.
+
+This is implemented as a Minimum Viable Product (MVP) using static data sources.
+
 
 - builds the FastAPI app, wraps it with FastMCP, mounts MCP HTTP/SSE endpoints, registers resources and prompts, and starts uvicorn.
 - requirements.txt – Python dependencies.
@@ -52,8 +59,8 @@ MCP endpoints served by FastMCP:
 ## Try the HTTP endpoints (curl)
 
 ```bash
-curl -X POST "http://localhost:8003/miles-to-kilometers?miles=3.1" \
- -H "Authorization: Bearer 143f4a46d74fee0d7918b2857577868cb3daf9e6e50ee91c2f7975ba26fdb8f7"
+# Pre-dispatch risk assessment
+curl -X POST "http://localhost:8003/assess-route-risk?shipment_id=SHP001&planned_dispatch_date=2026-05-10&origin_port=Singapore&destination_port=Dubai&cargo_type=temperature"
 
 # If we use pydantic models
 curl -X POST "http://localhost:8003/miles-to-kilometers" \
@@ -63,43 +70,38 @@ curl -X POST "http://localhost:8003/miles-to-kilometers" \
 ```
 
 ```bash
-# Celsius → Fahrenheit
-curl -X POST "http://localhost:8003/celsius-to-fahrenheit" \
- -H "Content-Type: application/json" \
- -d "25"
+# In-transit monitoring
+curl -X POST "http://localhost:8003/monitor-in-transit-risk?shipment_id=SHP002&original_eta=2026-05-10&revised_eta=2026-05-12&cargo_type=critical"
 ```
 
 ```bash
-# Fahrenheit → Celsius
-curl -X POST "http://localhost:8003/fahrenheit-to-celsius" \
- -H "Content-Type: application/json" \
- -d "86"
+# Delay communication
+curl -X POST "http://localhost:8003/prepare-delay-communication?shipment_id=SHP003&customer_id=CUST001&delay_hours=48&risk_level=high&revised_eta=2026-05-12"
 ```
 
 ```bash
-# Kilometers → Miles
-curl -X POST "http://localhost:8003/kilometers-to-miles" \
- -H "Content-Type: application/json" \
- -d "5"
+# Operational Action Rocumentation
+curl -X POST "http://localhost:8003/record-operational-action?shipment_id=SHP004&stage=in_transit&action=contact_carrier&action_by=operator&action_reason=delay_detected"
 ```
 
-```bash
-# Miles → Kilometers (rejects negative values)
-curl -X POST "http://localhost:8003/miles-to-kilometers" \
- -H "Content-Type: application/json" \
- -d "3.1"
-```
 
-Each endpoint returns JSON like:
+Each endpoint returns structured JSON with the tool result and operation name, for example:
 
-- { "result": <number>, "operation": "..." } or { "error": "..." } for invalid input.
+- `assess_route_risk` returns risk summary, risk drivers, historical context, decision guidance, and recommended actions.
+- `monitor_in_transit_risk` returns ETA analysis, urgency level, impact assessment, escalation guidance, and recommended actions.
+- `prepare_delay_communication` returns an internal alert, customer contact details, customer email draft, and recommended review actions.
+- `record_operational_action` returns a structured action log with status, timestamp, action details, and system note.
+
+Invalid inputs may return either:
+- FastAPI validation errors, such as HTTP `422`, for missing required query parameters.
+- Tool-level error messages, such as invalid `stage`, invalid `action`, invalid `risk_level`, or customer not found.
 
 ## Headers & Authentication (common to all)
 
-### Add JSON content type (and optionally your auth token)
+### Headers
 
--H "Content-Type: application/json" \
--H "Authorization: Bearer <TOKEN>"
+```bash
+-H "Content-Type: application/json"
 
 Our server doesn’t require auth yet, we can omit the **Authorization** header.
 
@@ -112,54 +114,62 @@ Our server doesn’t require auth yet, we can omit the **Authorization** header.
 // Example VS Code .vscode/mcp.json entry:
 {
   "servers": {
-    "UnitConverter": {
+    "RiskWatch": {
       "command": "python",
-      "args": ["converter_api_tutorial.py"]
+      "args": ["converter_streamable_http_server.py"]
     }
   }
 }
 ```
 
 3. From the MCP client, list artifacts. You should see:
-   - Tools: celsius_to_fahrenheit, fahrenheit_to_celsius, kilometers_to_miles, miles_to_kilometers
-   - Resources: resource://unit_reference, resource://troubleshooting_guide
-   - Prompts: explain_conversion, api_usage
+Tools:
+assess_route_risk
+monitor_in_transit_risk
+prepare_delay_communication
+record_operational_action
+Resources:
+resource://risk_thresholds
+resource://port_risk_profiles
+resource://customer_data
+resource://global_supply_chain_risk_2026
+Prompts:
+generate_risk_briefing
+escalation_alert
+
+
 
 ⸻
 
-## Inspect with the npm MCP Inspector
+## Inspect with the MCP Inspector
 
-- explore everything (tools, resources, prompts) in a browser.
-- with the server already running on http://localhost:8003
+- Use the MCP Inspector to explore tools, resources, and prompts in a browser.
+- Ensure the server is running at: http://localhost:8003
 
 ```bash
-# If env error appears
+# Recommended (streamable HTTP)
 npx @modelcontextprotocol/inspector@latest -e DUMMY=1 --url http://localhost:8003/mcp --transport streamable-http
 
-# If you want to test the older HTTP:
+# Alternative (HTTP transport)
 npx @modelcontextprotocol/inspector@latest -e DUMMY=1 --url http://localhost:8003/mcp --transport http
 
-# If you want to test the deprecated SSE:
+# Deprecated (SSE transport)
 npx @modelcontextprotocol/inspector@latest -e DUMMY=1 --url http://localhost:8003/sse --transport sse
-```
 
 ## To run the STDIO server only
 
 ```bash
-# If venv is ".venv", change to .\.venv\Scripts\python.exe
+# If using virtual environment, adjust Python path if needed
 npx @modelcontextprotocol/inspector python converter_stdio_server.py
-```
-
-- UI runs on localhost:5173 by default.
-- Change UI port if needed: CLIENT_PORT=8080 npx @modelcontextprotocol/inspector --url http://localhost:8003/mcp --transport http
-- Add headers if required: --header "Authorization: Bearer TOKEN".
 
 ## JSON-RPC Examples for Prompts & Resources
+These examples use the MCP endpoint:
+http://localhost:8003/mcp
 
 1. List all prompts
 
 ```bash
-curl -s -X POST <SERVER_URL> \
+curl -s -X POST http://localhost:8003/mcp \
 -H "Content-Type: application/json" \
 -d '{"jsonrpc":"2.0","method":"prompts/list","params":{},"id":1}'
 ```
@@ -169,9 +179,9 @@ curl -s -X POST <SERVER_URL> \
 2. Get a specific prompt
 
 ```bash
-curl -s -X POST <SERVER_URL> \
+curl -s -X POST http://localhost:8003/mcp \
 -H "Content-Type: application/json" \
--d '{"jsonrpc":"2.0","method":"prompts/get","params":{"name":"summarize"},"id":2}'
+-d '{"jsonrpc":"2.0","method":"prompts/get","params":{"name":"generate_risk_briefing"},"id":2}'
 ```
 
 ⸻
@@ -179,15 +189,15 @@ curl -s -X POST <SERVER_URL> \
 3. Render/execute a prompt with variables
 
 ```bash
-curl -s -X POST <SERVER_URL> \
+curl -s -X POST http://localhost:8003/mcp \
 -H "Content-Type: application/json" \
--d '{"jsonrpc":"2.0","method":"prompts/render","params":{"name":"summarize","variables":{"text":"This is the content to summarize","tone":"neutral"}},"id":3}'
+-d '{"jsonrpc":"2.0","method":"prompts/render","params":{"name":"generate_risk_briefing","variables":{"text":"Shipment SHP001 delay detected","tone":"neutral"}},"id":3}'
 ```
 
 4. List available resources
 
 ```bash
-curl -s -X POST <SERVER_URL> \
+curl -s -X POST http://localhost:8003/mcp \
 -H "Content-Type: application/json" \
 -d '{"jsonrpc":"2.0","method":"resources/list","params":{},"id":4}'
 ```
@@ -195,28 +205,53 @@ curl -s -X POST <SERVER_URL> \
 5. Read a resource by URI
 
 ```bash
-curl -s -X POST <SERVER_URL> \
+curl -s -X POST http://localhost:8003/mcp \
 -H "Content-Type: application/json" \
--d '{"jsonrpc":"2.0","method":"resources/read","params":{"uri":"file:///data/report.pdf"},"id":5}'
+-d '{"jsonrpc":"2.0","method":"resources/read","params":{"uri":"resource://port_risk_profiles"},"id":5}'
 ```
 
 6. Search resources (if supported)
 
 ```bash
-curl -s -X POST <SERVER_URL> \
+curl -s -X POST http://localhost:8003/mcp \
 -H "Content-Type: application/json" \
--d '{"jsonrpc":"2.0","method":"resources/search","params":{"query":"error OR exception","limit":50},"id":6}'
+-d '{"jsonrpc":"2.0","method":"resources/search","params":{"query":"Singapore OR delay OR temperature","limit":50},"id":6}'
 ```
 
 ⸻
 
 ## Handling errors
 
-- Parse error (-32700)
-- Invalid request (-32600)
-- Method not found (-32601)
-- Invalid params (-32602)
-- Internal error (-32603)
+### JSON-RPC Errors (MCP)
+
+- Parse error (-32700)  
+- Invalid request (-32600)  
+- Method not found (-32601)  
+- Invalid params (-32602)  
+- Internal error (-32603)  
+
+### HTTP / FastAPI Errors
+
+- **422 Unprocessable Entity**  
+  Occurs when required query parameters are missing or incorrectly named.
+
+### Tool-Level Errors (from implementation)
+
+- Invalid `stage` → returns valid options (`pre_dispatch`, `in_transit`, `communication`)  
+- Invalid `action` → returns list of allowed actions  
+- Invalid `risk_level` → returns valid options (`low`, `medium`, `high`)  
+- Customer not found → returns error with `customer_id`   
+
+### Data Handling
+
+- If a port is not matched in `port_risk_profiles`, a default score is applied  
+- System continues processing instead of failing  
+
+### Notes
+
+- The system prioritizes graceful handling of errors  
+- Most errors guide the user to correct the input rather than stopping execution  
+
 
 ## Notes
 
@@ -225,12 +260,37 @@ macOS/Linux (bash/zsh)
 
 ```bash
 # Windows PowerShell
-curl -Method POST <SERVER_URL> `  -Headers @{ "Content-Type"="application/json" }`
--Body '{"jsonrpc":"2.0","method":"prompts/list","params":{},"id":1}'
+curl -Method POST http://localhost:8003/mcp `
+  -Headers @{ "Content-Type" = "application/json" } `
+  -Body '{"jsonrpc":"2.0","method":"prompts/list","params":{},"id":1}'
 ```
 
 Windows CMD
 
 ```bash
-curl -s -X POST <SERVER_URL> -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"method\":\"prompts/list\",\"params\":{},\"id\":1}"
+curl -s -X POST http://localhost:8003/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"method\":\"prompts/list\",\"params\":{},\"id\":1}"
 ```
+
+
+## Definition of Terms
+
+**General Cargo**  
+Non-perishable goods with low urgency. Delays have minimal operational impact and higher flexibility in handling.
+
+**Critical Cargo**  
+High-priority shipments where delays may disrupt operations, production schedules, or supply chain continuity.
+
+**Temperature-Sensitive Cargo**  
+Perishable or low shelf-life goods requiring controlled conditions. Highly vulnerable to delays and handling risks.
+
+**Risk Score**  
+A calculated value based on multiple factors such as port congestion, cargo sensitivity, and historical data.
+
+**Risk Level**  
+Classification of shipment risk based on predefined thresholds:
+- Low
+- Medium
+- High
+
+**Delay Impact**  
+The operational consequence of shipment delays, influenced by cargo type, port conditions, and delay duration.

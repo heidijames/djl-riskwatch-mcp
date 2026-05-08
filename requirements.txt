@@ -1,7 +1,6 @@
-fastmcp
-uvicorn
 fastapi
+uvicorn
 fastapi-mcp
-feedparser
+fastmcp
 python-dotenv
 httpx

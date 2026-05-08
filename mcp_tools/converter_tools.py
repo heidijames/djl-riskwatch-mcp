@@ -6,9 +6,11 @@ import csv
 from io import StringIO
 from statistics import mean
 from datetime import datetime
+
+from pydantic import BaseModel
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from mcp_resources.converter_resources import (
     risk_thresholds,
@@ -19,24 +21,91 @@ from mcp_resources.converter_resources import (
 
 router = APIRouter(prefix="", tags=["riskwatch"])
 
+class AssessRouteRiskInput(BaseModel):
+    shipment_id: str
+    planned_dispatch_date: str
+    origin_port: str
+    destination_port: str
+    cargo_type: str
+
+
+class MonitorInTransitRiskInput(BaseModel):
+    shipment_id: str
+    original_eta: str
+    revised_eta: str
+    cargo_type: str
+
+
+class PrepareDelayCommunicationInput(BaseModel):
+    shipment_id: str
+    customer_id: str
+    delay_hours: int
+    risk_level: str
+    revised_eta: str
+
+
+class RecordOperationalActionInput(BaseModel):
+    shipment_id: str
+    stage: str
+    action: str
+    action_by: str
+    action_reason: str
+    notes: Optional[str] = None
+    estimated_delay_cost: Optional[float] = None
+    currency: Optional[str] = None
+    cost_basis: Optional[str] = None
+
+
+VALID_PORTS = list(port_risk_profiles().keys())
+
+VALID_STAGES = ["pre_dispatch", "in_transit", "communication"]
+
+VALID_ACTIONS = [
+    "proceed",
+    "delay_dispatch",
+    "escalate",
+    "contact_carrier",
+    "notify_customer",
+    "no_action",
+    "override",
+    "customer_email_sent",
+    "customer_email_not_sent",
+]
 
 INPUT_GUIDE = {
-    "cargo_type": {
-        "general": "Non-perishable cargo with low urgency.",
-        "critical": "High-priority cargo where delays may disrupt operations or supply continuity.",
-        "temperature": "Temperature-sensitive, perishable, or low shelf-life cargo.",
+    "assess_route_risk": {
+        "shipment_id": "Unique shipment reference, e.g. SHP001.",
+        "planned_dispatch_date": "Planned dispatch date in YYYY-MM-DD format.",
+        "origin_port": f"Must be one of: {VALID_PORTS}",
+        "destination_port": f"Must be one of: {VALID_PORTS}",
+        "cargo_type": "general | critical | temperature",
     },
-    "origin_port": {
-        "example": "Singapore",
-        "description": "Starting port for the shipment route.",
+    "monitor_in_transit_risk": {
+        "shipment_id": "Unique shipment reference, e.g. SHP002.",
+        "original_eta": "Original expected arrival date in YYYY-MM-DD format.",
+        "revised_eta": "Updated ETA from carrier or operations in YYYY-MM-DD format.",
+        "cargo_type": "general | critical | temperature",
     },
-    "destination_port": {
-        "example": "Port Klang",
-        "description": "Destination port for the shipment route.",
+    "prepare_delay_communication": {
+        "shipment_id": "Unique shipment reference, e.g. SHP003.",
+        "customer_id": "Customer ID that must exist in customer_data.json.",
+        "delay_hours": "Total delay duration in hours.",
+        "risk_level": "low | medium | high",
+        "revised_eta": "Updated ETA in YYYY-MM-DD format.",
     },
-    "planned_dispatch_date": {
-        "example": "2026-05-10",
-        "description": "Planned shipment dispatch date in YYYY-MM-DD format.",
+    "record_operational_action": {
+        "shipment_id": "Unique shipment reference, e.g. SHP004.",
+        "stage": "pre_dispatch | in_transit | communication",
+        "action": (
+            "proceed | delay_dispatch | escalate | contact_carrier | notify_customer | "
+            "no_action | override | customer_email_sent | customer_email_not_sent"
+        ),
+        "action_by": "Operator name or role.",
+        "action_reason": "Short reason for the action.",
+        "notes": "Optional supporting notes.",
+        "estimated_delay_cost": "Optional estimated financial impact.",
+        "currency": "Optional currency, e.g. USD, SGD, AUD.",
+        "cost_basis": "Optional explanation of how the cost was estimated.",
     },
 }
 
@@ -569,80 +638,94 @@ def record_operational_action_value(
 
 
 @router.post("/assess-route-risk")
-def assess_route_risk_endpoint(
-    shipment_id: str,
-    planned_dispatch_date: str,
-    origin_port: str,
-    destination_port: str,
-    cargo_type: str,
-):
+def assess_route_risk_endpoint(data: AssessRouteRiskInput):
+
+    if data.origin_port not in VALID_PORTS:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Invalid origin_port",
+                "valid_options": VALID_PORTS,
+            },
+        )
+
+    if data.destination_port not in VALID_PORTS:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Invalid destination_port",
+                "valid_options": VALID_PORTS,
+            },
+        )
+
     result = assess_route_risk(
-        shipment_id,
-        planned_dispatch_date,
-        origin_port,
-        destination_port,
-        cargo_type,
+        data.shipment_id,
+        data.planned_dispatch_date,
+        data.origin_port,
+        data.destination_port,
+        data.cargo_type,
     )
+
     return {"result": result, "operation": "assess_route_risk"}
 
-
 @router.post("/monitor-in-transit-risk")
-def monitor_in_transit_risk_endpoint(
-    shipment_id: str,
-    original_eta: str,
-    revised_eta: str,
-    cargo_type: str,
-):
+def monitor_in_transit_risk_endpoint(data: MonitorInTransitRiskInput):
     result = monitor_in_transit_risk(
-        shipment_id,
-        original_eta,
-        revised_eta,
-        cargo_type,
+        data.shipment_id,
+        data.original_eta,
+        data.revised_eta,
+        data.cargo_type,
     )
+
+    if isinstance(result, dict) and "error" in result:
+        raise HTTPException(status_code=400, detail=result)
+
     return {"result": result, "operation": "monitor_in_transit_risk"}
 
 
 @router.post("/prepare-delay-communication")
-def prepare_delay_communication_endpoint(
-    shipment_id: str,
-    customer_id: str,
-    delay_hours: int,
-    risk_level: str,
-    revised_eta: str,
-):
+def prepare_delay_communication_endpoint(data: PrepareDelayCommunicationInput):
     result = prepare_delay_communication_value(
-        shipment_id,
-        customer_id,
-        delay_hours,
-        risk_level,
-        revised_eta,
+        data.shipment_id,
+        data.customer_id,
+        data.delay_hours,
+        data.risk_level,
+        data.revised_eta,
     )
+
+    if isinstance(result, dict) and "error" in result:
+        raise HTTPException(status_code=400, detail=result)
+
     return {"result": result, "operation": "prepare_delay_communication"}
 
 
 @router.post("/record-operational-action")
-def record_operational_action_endpoint(
-    shipment_id: str,
-    stage: str,
-    action: str,
-    action_by: str,
-    action_reason: str,
-    notes: Optional[str] = None,
-    estimated_delay_cost: Optional[float] = None,
-    currency: Optional[str] = None,
-    cost_basis: Optional[str] = None,
-):
+def record_operational_action_endpoint(data: RecordOperationalActionInput):
+
+    if data.stage not in VALID_STAGES:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Invalid stage", "valid_options": VALID_STAGES},
+        )
+
+    if data.action not in VALID_ACTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Invalid action", "valid_options": VALID_ACTIONS},
+        )
+
     result = record_operational_action_value(
-        shipment_id,
-        stage,
-        action,
-        action_by,
-        action_reason,
-        notes,
-        estimated_delay_cost,
-        currency,
-        cost_basis,
+        data.shipment_id,
+        data.stage,
+        data.action,
+        data.action_by,
+        data.action_reason,
+        data.notes,
+        data.estimated_delay_cost,
+        data.currency,
+        data.cost_basis,
     )
+
     return {"result": result, "operation": "record_operational_action"}
 
 TOOL_DEFINITIONS = [
@@ -653,10 +736,10 @@ Evaluate pre-dispatch shipment risk and recommend actions.
 
 Input guide:
 - shipment_id: unique shipment reference, e.g. SHP001
+- planned_dispatch_date: planned dispatch date, format YYYY-MM-DD
+- origin_port: must match supported ports from port_risk_profiles.json
+- destination_port: must match supported ports from port_risk_profiles.json
 - cargo_type: general | critical | temperature
-- weather_condition: normal | moderate | severe
-- geopolitical_risk: low | medium | high
-- carrier_reliability: high | medium | low
 """,
         "func": assess_route_risk,
         "tags": {"logistics", "risk", "pre-dispatch"},
