@@ -1,226 +1,214 @@
 import tkinter as tk
 from tkinter import ttk
+import json
 import requests
 
-API_BASE_URL = "http://127.0.0.1:8004"
+API_BASE_URL = "http://127.0.0.1:8003"
 
-PORTS = ["Singapore", "Shanghai", "Port Klang", "Dubai"]
+PORTS = ["Singapore", "Port Klang", "Shanghai", "Dubai"]
+CARGO_TYPES = ["general", "critical", "temperature"]
+RISK_LEVELS = ["low", "medium", "high"]
+STAGES = ["pre_dispatch", "in_transit", "communication"]
+ACTIONS = [
+    "proceed",
+    "delay_dispatch",
+    "escalate",
+    "contact_carrier",
+    "notify_customer",
+    "no_action",
+    "override",
+    "customer_email_sent",
+    "customer_email_not_sent",
+]
+
+TOOLS = {
+    "assess_route_risk": {
+        "endpoint": "/assess-route-risk",
+        "fields": [
+            ("shipment_id", "entry"),
+            ("planned_dispatch_date", "entry"),
+            ("origin_port", "port"),
+            ("destination_port", "port"),
+            ("cargo_type", "cargo"),
+        ],
+    },
+    "monitor_in_transit_risk": {
+        "endpoint": "/monitor-in-transit-risk",
+        "fields": [
+            ("shipment_id", "entry"),
+            ("original_eta", "entry"),
+            ("revised_eta", "entry"),
+            ("cargo_type", "cargo"),
+        ],
+    },
+    "prepare_delay_communication": {
+        "endpoint": "/prepare-delay-communication",
+        "fields": [
+            ("shipment_id", "entry"),
+            ("customer_id", "entry"),
+            ("delay_hours", "entry"),
+            ("risk_level", "risk"),
+            ("revised_eta", "entry"),
+        ],
+    },
+    "record_operational_action": {
+        "endpoint": "/record-operational-action",
+        "fields": [
+            ("shipment_id", "entry"),
+            ("stage", "stage"),
+            ("action", "action"),
+            ("action_by", "entry"),
+            ("action_reason", "entry"),
+            ("notes", "entry"),
+            ("estimated_delay_cost", "entry"),
+            ("currency", "entry"),
+            ("cost_basis", "entry"),
+        ],
+    },
+}
 
 
-def run_operation():
-    operation = operation_var.get()
+def create_widget(field_type):
+    if field_type == "port":
+        return ttk.Combobox(input_frame, values=PORTS, state="readonly")
+    if field_type == "cargo":
+        return ttk.Combobox(input_frame, values=CARGO_TYPES, state="readonly")
+    if field_type == "risk":
+        return ttk.Combobox(input_frame, values=RISK_LEVELS, state="readonly")
+    if field_type == "stage":
+        return ttk.Combobox(input_frame, values=STAGES, state="readonly")
+    if field_type == "action":
+        return ttk.Combobox(input_frame, values=ACTIONS, state="readonly")
+    return ttk.Entry(input_frame, width=45)
+
+
+def update_fields(event=None):
+    for widget in input_frame.winfo_children():
+        widget.destroy()
+
+    field_widgets.clear()
+
+    selected_tool = tool_var.get()
+    fields = TOOLS[selected_tool]["fields"]
+
+    for row, (field_name, field_type) in enumerate(fields):
+        label_text = field_name.replace("_", " ").title()
+        ttk.Label(input_frame, text=label_text).grid(row=row, column=0, sticky="w", padx=5, pady=4)
+
+        widget = create_widget(field_type)
+        widget.grid(row=row, column=1, sticky="ew", padx=5, pady=4)
+
+        if field_type == "cargo":
+            widget.set("general")
+        elif field_type == "risk":
+            widget.set("medium")
+        elif field_type == "stage":
+            widget.set("in_transit")
+        elif field_type == "action":
+            widget.set("contact_carrier")
+        elif field_type == "port":
+            widget.set(PORTS[0])
+
+        field_widgets[field_name] = widget
+
+    output_box.delete("1.0", tk.END)
+    status_label.config(text="")
+
+
+def get_payload():
+    payload = {}
+
+    for field_name, widget in field_widgets.items():
+        value = widget.get().strip()
+
+        if value == "":
+            continue
+
+        if field_name == "delay_hours":
+            payload[field_name] = int(value)
+        elif field_name == "estimated_delay_cost":
+            payload[field_name] = float(value)
+        else:
+            payload[field_name] = value
+
+    return payload
+
+
+def run_tool():
+    selected_tool = tool_var.get()
+    endpoint = TOOLS[selected_tool]["endpoint"]
+    url = f"{API_BASE_URL}{endpoint}"
 
     try:
-        if operation == "Pre-Dispatch Risk Assessment":
-            url = f"{API_BASE_URL}/assess-route-risk"
-            data = {
-                "shipment_id": shipment_id.get(),
-                "planned_dispatch_date": dispatch_date.get(),
-                "origin_port": origin_port.get(),
-                "destination_port": destination_port.get(),
-                "cargo_type": cargo_type.get(),
-            }
+        payload = get_payload()
 
-        else:
-            url = f"{API_BASE_URL}/monitor-in-transit-risk"
-            data = {
-                "shipment_id": shipment_id.get(),
-                "original_eta": original_eta.get(),
-                "revised_eta": revised_eta.get(),
-                "cargo_type": cargo_type.get(),
-            }
-
-        response = requests.post(url, params=data)
+        response = requests.post(url, json=payload)
         result = response.json()
 
-        display_output(result)
+        output_box.delete("1.0", tk.END)
+        output_box.insert(tk.END, json.dumps(result, indent=2))
+
+        if response.status_code == 200:
+            status_label.config(text="Success", foreground="green")
+        else:
+            status_label.config(text=f"Error {response.status_code}", foreground="red")
+
+    except ValueError as e:
+        output_box.delete("1.0", tk.END)
+        output_box.insert(tk.END, f"Input error: {e}")
+        status_label.config(text="Input Error", foreground="red")
+
+    except requests.exceptions.RequestException as e:
+        output_box.delete("1.0", tk.END)
+        output_box.insert(tk.END, f"Connection error: {e}")
+        status_label.config(text="Connection Error", foreground="red")
 
     except Exception as e:
         output_box.delete("1.0", tk.END)
         output_box.insert(tk.END, f"Error: {e}")
-
-
-def display_output(result):
-    output_box.delete("1.0", tk.END)
-
-    data = result.get("result", {})
-
-    if operation_var.get() == "Pre-Dispatch Risk Assessment":
-        summary = data.get("summary", {})
-        risk = summary.get("risk_level", "").upper()
-        score = summary.get("risk_score", "")
-
-        risk_label.config(text=f"Risk Level: {risk}", foreground=get_color(risk))
-
-        text = f"""
-Shipment: {summary.get('shipment_id')}
-Route: {summary.get('origin_port')} → {summary.get('destination_port')}
-Cargo: {summary.get('cargo_type')}
-
-Risk Score: {score}
-
-Key Drivers:
-"""
-        for driver in data.get("risk_drivers", []):
-            text += f"- {driver}\n"
-
-        text += "\nRecommended Actions:\n"
-        for action in data.get("recommended_actions", []):
-            text += f"- {action}\n"
-
-    else:
-        summary = data.get("summary", {})
-        urgency_data = data.get("urgency", {})
-        urgency = urgency_data.get("level", "").upper()
-
-        risk_label.config(text=f"Urgency: {urgency}", foreground=get_color(urgency))
-
-        eta = data.get("eta_analysis", {})
-
-        text = f"""
-Shipment: {summary.get('shipment_id')}
-
-Delay Hours: {eta.get('delay_hours')}
-Status: {eta.get('status')}
-
-Impact:
-{data.get("impact_assessment")}
-"""
-
-        text += "\nPriority Actions:\n"
-        for action in data.get("recommended_actions", {}).get("priority", []):
-            text += f"- {action}\n"
-
-    output_box.insert(tk.END, text)
-
-
-def get_color(level):
-    if "HIGH" in level:
-        return "red"
-    elif "MEDIUM" in level:
-        return "orange"
-    else:
-        return "green"
-
-
-def update_fields(event=None):
-    op = operation_var.get()
-
-    # Clear previous output/status when switching tools
-    output_box.delete("1.0", tk.END)
-    risk_label.config(text="")
-
-    # Hide all dynamic fields
-    for widget in dynamic_widgets:
-        widget.grid_remove()
-
-    if op == "Pre-Dispatch Risk Assessment":
-        dispatch_date_label.grid()
-        dispatch_date.grid()
-        origin_label.grid()
-        origin_port.grid()
-        destination_label.grid()
-        destination_port.grid()
-
-    elif op == "In-Transit Monitoring":
-        original_eta_label.grid()
-        original_eta.grid()
-        revised_eta_label.grid()
-        revised_eta.grid()
+        status_label.config(text="Error", foreground="red")
 
 
 root = tk.Tk()
-root.title("DJL RiskWatch")
-root.geometry("800x700")
+root.title("DJL RiskWatch Dashboard")
+root.geometry("950x750")
 
 ttk.Label(
     root,
     text="DJL RiskWatch Dashboard",
-    font=("Arial", 14, "bold")
-).grid(row=0, column=0, columnspan=2, pady=10)
+    font=("Arial", 16, "bold")
+).pack(pady=10)
 
-operation_var = tk.StringVar(value="Pre-Dispatch Risk Assessment")
+tool_var = tk.StringVar(value="assess_route_risk")
 
-ttk.Label(root, text="Select Operation").grid(row=1, column=0)
+tool_frame = ttk.Frame(root)
+tool_frame.pack(fill="x", padx=15, pady=5)
 
-operation_dropdown = ttk.Combobox(
-    root,
-    textvariable=operation_var,
-    values=["Pre-Dispatch Risk Assessment", "In-Transit Monitoring"],
-    state="readonly"
+ttk.Label(tool_frame, text="Select Tool").pack(side="left", padx=5)
+
+tool_dropdown = ttk.Combobox(
+    tool_frame,
+    textvariable=tool_var,
+    values=list(TOOLS.keys()),
+    state="readonly",
+    width=35
 )
-operation_dropdown.grid(row=1, column=1)
-operation_dropdown.bind("<<ComboboxSelected>>", update_fields)
+tool_dropdown.pack(side="left", padx=5)
+tool_dropdown.bind("<<ComboboxSelected>>", update_fields)
 
-ttk.Label(root, text="Shipment ID").grid(row=2, column=0)
-shipment_id = ttk.Entry(root)
-shipment_id.grid(row=2, column=1)
+input_frame = ttk.LabelFrame(root, text="Input Fields")
+input_frame.pack(fill="x", padx=15, pady=10)
 
-ttk.Label(root, text="Cargo Type").grid(row=3, column=0)
-cargo_type = ttk.Combobox(
-    root,
-    values=["general", "critical", "temperature"],
-    state="readonly"
-)
-cargo_type.grid(row=3, column=1)
-cargo_type.set("general")
+field_widgets = {}
 
-dispatch_date_label = ttk.Label(root, text="Dispatch Date")
-dispatch_date = ttk.Entry(root)
+ttk.Button(root, text="Run Tool", command=run_tool).pack(pady=10)
 
-origin_label = ttk.Label(root, text="Origin Port")
-origin_port = ttk.Combobox(root, values=PORTS, state="readonly")
+status_label = ttk.Label(root, text="", font=("Arial", 12, "bold"))
+status_label.pack()
 
-destination_label = ttk.Label(root, text="Destination Port")
-destination_port = ttk.Combobox(root, values=PORTS, state="readonly")
+output_box = tk.Text(root, height=25, width=110)
+output_box.pack(padx=15, pady=10)
 
-original_eta_label = ttk.Label(root, text="Original ETA")
-original_eta = ttk.Entry(root)
-
-revised_eta_label = ttk.Label(root, text="Revised ETA")
-revised_eta = ttk.Entry(root)
-
-dispatch_date_label.grid(row=4, column=0)
-dispatch_date.grid(row=4, column=1)
-
-origin_label.grid(row=5, column=0)
-origin_port.grid(row=5, column=1)
-
-destination_label.grid(row=6, column=0)
-destination_port.grid(row=6, column=1)
-
-original_eta_label.grid(row=4, column=0)
-original_eta.grid(row=4, column=1)
-
-revised_eta_label.grid(row=5, column=0)
-revised_eta.grid(row=5, column=1)
-
-dynamic_widgets = [
-    dispatch_date_label,
-    dispatch_date,
-    origin_label,
-    origin_port,
-    destination_label,
-    destination_port,
-    original_eta_label,
-    original_eta,
-    revised_eta_label,
-    revised_eta,
-]
-
-ttk.Button(
-    root,
-    text="Run Operation",
-    command=run_operation
-).grid(row=7, column=0, columnspan=2, pady=10)
-
-risk_label = ttk.Label(root, text="", font=("Arial", 12, "bold"))
-risk_label.grid(row=8, column=0, columnspan=2)
-
-output_box = tk.Text(root, height=20, width=85)
-output_box.grid(row=9, column=0, columnspan=2, padx=10, pady=10)
-
-# Important: call this only AFTER output_box and risk_label exist
 update_fields()
 
 root.mainloop()

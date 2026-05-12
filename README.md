@@ -57,31 +57,67 @@ MCP endpoints served by FastMCP:
 ⸻
 
 ## Try the HTTP endpoints (curl)
+Make sure the server is running:
+     python converter_streamable_http_server.py
+The API will be available at:
+     http://localhost:8003
+
+
+Headers (common to all requests)
+-H "Content-Type: application/json"
+
+Authentication is not required for this MVP.
 
 ```bash
-# Pre-dispatch risk assessment
-curl -X POST "http://localhost:8003/assess-route-risk?shipment_id=SHP001&planned_dispatch_date=2026-05-10&origin_port=Singapore&destination_port=Dubai&cargo_type=temperature"
+# assess_route_risk
+curl -X POST "http://localhost:8004/assess-route-risk" \
+-H "Content-Type: application/json" \
+-d '{
+  "shipment_id": "SHP001",
+  "planned_dispatch_date": "2026-05-10",
+  "origin_port": "Singapore",
+  "destination_port": "Dubai",
+  "cargo_type": "temperature"
+}'
 
-# If we use pydantic models
-curl -X POST "http://localhost:8003/miles-to-kilometers" \
- -H "Content-Type: application/json" \
- -H "Authorization: Bearer Y658139cf61948208ed76a4b36122b9552ec5c3f6da5e02f7c5d85d995dede17dE" \
- -d "3.1"
 ```
 
 ```bash
-# In-transit monitoring
-curl -X POST "http://localhost:8003/monitor-in-transit-risk?shipment_id=SHP002&original_eta=2026-05-10&revised_eta=2026-05-12&cargo_type=critical"
+# monitor_in_transit_risk
+curl -X POST "http://localhost:8004/monitor-in-transit-risk" \
+-H "Content-Type: application/json" \
+-d '{
+  "shipment_id": "SHP002",
+  "original_eta": "2026-05-10",
+  "revised_eta": "2026-05-12",
+  "cargo_type": "critical"
+}'
 ```
 
 ```bash
-# Delay communication
-curl -X POST "http://localhost:8003/prepare-delay-communication?shipment_id=SHP003&customer_id=CUST001&delay_hours=48&risk_level=high&revised_eta=2026-05-12"
+# prepare_delay_communication
+curl -X POST "http://localhost:8004/prepare-delay-communication" \
+-H "Content-Type: application/json" \
+-d '{
+  "shipment_id": "SHP003",
+  "customer_id": "CUST001",
+  "delay_hours": 48,
+  "risk_level": "high",
+  "revised_eta": "2026-05-12"
+}'
 ```
 
 ```bash
-# Operational Action Rocumentation
-curl -X POST "http://localhost:8003/record-operational-action?shipment_id=SHP004&stage=in_transit&action=contact_carrier&action_by=operator&action_reason=delay_detected"
+# record_operational_action
+curl -X POST "http://localhost:8004/record-operational-action" \
+-H "Content-Type: application/json" \
+-d '{
+  "shipment_id": "SHP004",
+  "stage": "in_transit",
+  "action": "contact_carrier",
+  "action_by": "operator",
+  "action_reason": "Delay detected"
+}'
 ```
 
 
